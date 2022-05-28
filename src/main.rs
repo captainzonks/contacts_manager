@@ -26,10 +26,9 @@
 //   present in the data.
 
 use std::error::Error;
-use std::{fs, io, process};
+use std::{io, process};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::Path;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -39,20 +38,18 @@ struct Record {
     email: String,
 }
 
-fn read_from_csv(contents: &String) -> (Result<Vec<Record>, Box<dyn Error>>, u16) {
+fn read_from_csv(contents: &String) -> Result<Vec<Record>, Box<dyn Error>> {
     let mut rdr = csv::Reader::from_reader(contents.as_bytes());
     let mut contents = vec![];
-    let mut count = 0;
     for result in rdr.deserialize::<Record>() {
         match result {
             Ok(record) => {
                 contents.push(record);
-                count += 1;
-            },
-            Err(e) => {}
+            }
+            Err(_) => {}
         }
     }
-    (Ok(contents), count)
+    Ok(contents)
 }
 
 fn write_to_csv(to_write: Record, file: &mut File) -> Result<(), Box<dyn Error>> {
@@ -63,14 +60,43 @@ fn write_to_csv(to_write: Record, file: &mut File) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-fn print_contacts(record: &Record) {
+fn search_csv(query: &str, contents: &String) -> Result<(), Box<dyn Error>> {
+    // Build CSV readers and writers to stdin and stdout, respectively.
+    let mut rdr = csv::ReaderBuilder::new().from_reader(contents.as_bytes());
+    let mut wtr = csv::Writer::from_writer(io::stdout());
+
+    // Before reading our data records, we should write the header record.
+    wtr.write_record(rdr.headers()?)?;
+
+    // Iterate over all the records in `rdr`, and write only records containing
+    // `query` to `wtr`.
+    for result in rdr.records() {
+        // println!("{:?}", result);
+        if result.is_err() {
+            continue; // skip bad records
+        }
+        let record = result?;
+
+        if record.iter().any(|field| field == query) {
+            println!("{:?}", record);
+            wtr.write_record(&record)?;
+        }
+    }
+
+    // CSV writers use an internal buffer, so we should always flush when done.
+    wtr.flush()?;
+    Ok(())
+}
+
+fn print_contact(record: &Record) {
     println!("{:?}", record);
 }
 
 fn display_menu() {
     println!("1) Show contacts");
     println!("2) Add contact");
-    println!("3) Exit")
+    println!("3) Search contacts");
+    println!("4) Exit")
 }
 
 fn get_csv_input() -> (String, String) {
@@ -80,6 +106,13 @@ fn get_csv_input() -> (String, String) {
     let email = get_string_input();
 
     (name.to_owned(), email.to_owned())
+}
+
+fn get_search_input() -> String {
+    println!("Please enter an id, a full name, or an email to search:");
+    let name = get_string_input();
+
+    name
 }
 
 fn create_csv_record(id: u16, name: &str, email: &str) -> Record {
@@ -128,7 +161,6 @@ fn get_integer_input() -> i32 {
 fn main() -> std::io::Result<()> {
     let mut quit = false;
     while !quit {
-
         let file_path = "src/p2_data.csv";
         let mut file = OpenOptions::new()
             .read(true)
@@ -142,7 +174,6 @@ fn main() -> std::io::Result<()> {
             Ok(file) => {
                 file.read_to_string(&mut contents)?;
                 records = read_from_csv(&contents);
-                println!("records length: {:?}", &records.1);
             }
             Err(e) => {
                 println!("file error: {:?}", e);
@@ -153,11 +184,11 @@ fn main() -> std::io::Result<()> {
         display_menu();
         match get_integer_input() {
             1 => {
-                match &records.0 {
+                match &records {
                     Ok(records) => {
                         for entry in records
                         {
-                            print_contacts(entry);
+                            print_contact(entry);
                         }
                     }
                     Err(e) => {
@@ -167,11 +198,11 @@ fn main() -> std::io::Result<()> {
                 }
             }
             2 => {
-                let mut file_ref = file.as_mut().unwrap();
+                let file_ref = file.as_mut().unwrap();
                 let strings = get_csv_input();
-                match &records.0 {
+                match &records {
                     Ok(records) => {
-                        let new_id = records.len();
+                        let new_id = records.len() + 2;
                         let new_record = create_csv_record(new_id as u16, strings.0.as_str(), strings.1.as_str());
                         match write_to_csv(new_record, file_ref) {
                             Ok(_) => {
@@ -186,6 +217,15 @@ fn main() -> std::io::Result<()> {
                     Err(e) => {
                         println!("error running: {}", e);
                         process::exit(1);
+                    }
+                }
+            }
+            3 => {
+                let name = get_search_input();
+                match search_csv(name.as_str(), &contents) {
+                    Ok(()) => {},
+                    Err(e) => {
+                        println!("error searching records: {:?}", e);
                     }
                 }
             }
